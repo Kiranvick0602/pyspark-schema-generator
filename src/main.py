@@ -1,7 +1,7 @@
 import os
 import argparse
 from excel_reader import read_excel_mapping, get_excel_sheets
-from script_generator import generate_pyspark_schema, generate_spark_sql_ddl, generate_yaml_config
+from script_generator import generate_pyspark_schema, generate_spark_sql_ddl, generate_yaml_config, generate_spark_sql_merge
 
 def main():
     parser = argparse.ArgumentParser(description="PySpark Schema & Spark SQL DDL Generator")
@@ -13,9 +13,12 @@ def main():
     parser.add_argument("--database", "-d", type=str, default="", help="Target Database/Schema Name")
     parser.add_argument("--format", "-f", type=str, default="DELTA", help="Target Spark table format (DELTA, PARQUET, etc.)")
     parser.add_argument("--side", type=str, choices=["source", "destination"], default="destination", help="Extract mapping for source or destination columns (default: destination)")
+    parser.add_argument("--source-table", type=str, default=None, help="Source table/view name to use in generated MERGE SQL")
+    parser.add_argument("--merge-keys", type=str, default=None, help="Comma-separated key columns for generated MERGE SQL")
     parser.add_argument("--out-pyspark", "-op", type=str, default="output/generated_schema.py", help="Output path for PySpark StructType script")
     parser.add_argument("--out-sql", "-os", type=str, default="output/generated_ddl.sql", help="Output path for Spark SQL DDL")
     parser.add_argument("--out-yaml", "-oy", type=str, default="output/generated_config.yaml", help="Output path for YAML config")
+    parser.add_argument("--out-merge", "-om", type=str, default="output/generated_merge.sql", help="Output path for Spark SQL MERGE script")
     
     args = parser.parse_args()
     
@@ -76,10 +79,26 @@ def main():
         yaml_config = generate_yaml_config(df, table_name, args.catalog, args.database)
         with open(args.out_yaml, "w", encoding="utf-8") as f:
             f.write(yaml_config)
+
+    # 4. Generate Spark SQL MERGE script
+    if args.out_merge:
+        source_table = args.source_table or f"staging_{table_name}"
+        merge_keys = [key.strip() for key in args.merge_keys.split(",")] if args.merge_keys else None
+        print(f"Generating Spark SQL MERGE -> '{args.out_merge}'")
+        merge_sql = generate_spark_sql_merge(
+            df,
+            target_table=table_name,
+            source_table=source_table,
+            key_columns=merge_keys,
+            catalog_name=args.catalog,
+            database_name=args.database
+        )
+        with open(args.out_merge, "w", encoding="utf-8") as f:
+            f.write(merge_sql)
             
     print("\n[+] Schema Generation Completed successfully!")
     print(f"Preview of generated columns:")
     print(df.to_string(index=False))
 
 if __name__ == "__main__":
-    main()
+    main()

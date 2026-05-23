@@ -179,6 +179,10 @@ def standardize_dataframe(df, target_side="destination"):
         df = df.rename(columns={columns[0]: 'ColumnName'})
     if 'DataType' not in df.columns:
         df['DataType'] = 'string'
+    if 'Nullable' not in df.columns:
+        df['Nullable'] = 'Yes'
+    if 'Description' not in df.columns:
+        df['Description'] = ''
         
     # Standardize values, strip zero-width spaces, and handle empty/nan strings
     for col in ['ColumnName', 'DataType', 'Nullable', 'Description']:
@@ -196,4 +200,4 @@ def standardize_dataframe(df, target_side="destination"):
     df = df[df['ColumnName'].notna() & (df['ColumnName'] != '') & (~df['ColumnName'].str.startswith('Unnamed:'))]
     
     return df[['ColumnName', 'DataType', 'Nullable', 'Description']].copy()
-
+

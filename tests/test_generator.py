@@ -7,7 +7,7 @@ import pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from datatype_mapper import map_datatype, map_to_spark_sql_type
-from script_generator import generate_pyspark_schema, generate_spark_sql_ddl, generate_yaml_config
+from script_generator import generate_pyspark_schema, generate_spark_sql_ddl, generate_yaml_config, generate_spark_sql_merge
 
 class TestDatatypeMapper(unittest.TestCase):
     
@@ -68,6 +68,31 @@ class TestScriptGenerator(unittest.TestCase):
         self.assertIn("table_name: \"accounts\"", yaml_config)
         self.assertIn("- name: \"id\"", yaml_config)
         self.assertIn("type: \"int\"", yaml_config)
+
+    def test_merge_sql(self):
+        merge_sql = generate_spark_sql_merge(
+            self.df,
+            target_table="accounts",
+            source_table="staging_accounts",
+            key_columns=["id"],
+            catalog_name="prod",
+            database_name="silver"
+        )
+        self.assertIn("MERGE INTO `prod`.`silver`.`accounts` AS target", merge_sql)
+        self.assertIn("USING `staging_accounts` AS source", merge_sql)
+        self.assertIn("ON target.`id` = source.`id`", merge_sql)
+        self.assertIn("target.`name` = source.`name`", merge_sql)
+        self.assertIn("WHEN NOT MATCHED THEN INSERT", merge_sql)
+        self.assertIn("`id`, `name`, `balance`, `active`", merge_sql)
+
+    def test_merge_sql_rejects_missing_key(self):
+        with self.assertRaises(ValueError):
+            generate_spark_sql_merge(
+                self.df,
+                target_table="accounts",
+                source_table="staging_accounts",
+                key_columns=["missing_id"]
+            )
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,433 +1,481 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
 import io
 import os
 import sys
 
-# Add src to python path to import modules
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'src')))
+import pandas as pd
+import streamlit as st
 
-from excel_reader import read_excel_mapping, get_excel_sheets, standardize_dataframe
-from script_generator import generate_pyspark_schema, generate_spark_sql_ddl, generate_yaml_config
+# Add src to python path to import modules when running with streamlit.
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
 
-# Set page configurations
+from excel_reader import get_excel_sheets, read_excel_mapping
+from script_generator import (
+    generate_pyspark_schema,
+    generate_spark_sql_ddl,
+    generate_spark_sql_merge,
+    generate_yaml_config,
+)
+
+
 st.set_page_config(
     page_title="PySpark Schema Generator",
-    page_icon="🚀",
+    page_icon="🧩",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Premium Custom CSS Injection for Rich Aesthetics
-st.markdown("""
+
+st.markdown(
+    """
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
-    
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
     html, body, [class*="css"] {
-        font-family: 'Outfit', sans-serif;
+        font-family: 'Inter', sans-serif;
     }
-    
-    .glass-header {
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(88, 28, 135, 0.45));
-        border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 30px;
-        margin-bottom: 25px;
-        box-shadow: 0 10px 40px 0 rgba(0, 0, 0, 0.5);
-        text-align: center;
+
+    .stApp {
+        background:
+            linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(239, 246, 255, 0.82));
     }
-    
-    .glass-card {
-        background: rgba(17, 25, 40, 0.75);
-        backdrop-filter: blur(12px) saturate(180%);
-        -webkit-backdrop-filter: blur(12px) saturate(180%);
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        padding: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.35);
-        transition: all 0.3s ease-in-out;
+
+    section[data-testid="stSidebar"] {
+        background: #0f172a;
+        border-right: 1px solid rgba(148, 163, 184, 0.22);
     }
-    
-    .glass-card:hover {
-        border-color: rgba(0, 255, 204, 0.4);
-        box-shadow: 0 8px 32px 0 rgba(0, 255, 204, 0.12);
-        transform: translateY(-1px);
+
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] span {
+        color: #e2e8f0;
     }
-    
-    .neon-title {
-        color: #ffffff;
-        text-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
-        font-weight: 800;
-        font-size: 2.8rem;
-        margin-bottom: 5px;
-    }
-    
-    .neon-cyan {
-        color: #00ffcc;
-        text-shadow: 0 0 8px rgba(0, 255, 204, 0.4);
-    }
-    
-    .neon-purple {
-        color: #cc66ff;
-        text-shadow: 0 0 8px rgba(204, 102, 255, 0.4);
-    }
-    
-    .metric-container {
-        display: flex;
-        justify-content: space-around;
-        margin-bottom: 15px;
-    }
-    
-    .metric-box {
-        text-align: center;
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        padding: 10px 15px;
-        border-radius: 8px;
-        min-width: 110px;
-    }
-    
-    .metric-value {
-        font-size: 1.5rem;
+
+    section[data-testid="stSidebar"] button p,
+    section[data-testid="stSidebar"] button span,
+    section[data-testid="stSidebar"] [data-testid="stFileUploader"] button p,
+    section[data-testid="stSidebar"] [data-testid="stFileUploader"] button span {
+        color: #0f172a;
         font-weight: 700;
-        color: #00ffcc;
     }
-    
+
+    section[data-testid="stSidebar"] [data-testid="stFileUploader"] small,
+    section[data-testid="stSidebar"] [data-testid="stFileUploader"] div {
+        color: #cbd5e1;
+    }
+
+    .app-shell {
+        max-width: 1480px;
+        margin: 0 auto;
+    }
+
+    .topbar {
+        background: #ffffff;
+        border: 1px solid #dbe3ef;
+        border-radius: 8px;
+        padding: 22px 26px;
+        margin-bottom: 18px;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.07);
+    }
+
+    .eyebrow {
+        color: #0f766e;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+    }
+
+    .title {
+        color: #0f172a;
+        font-size: 2.15rem;
+        line-height: 1.1;
+        font-weight: 800;
+        margin: 0;
+    }
+
+    .subtitle {
+        color: #475569;
+        font-size: 1rem;
+        margin-top: 8px;
+        max-width: 900px;
+    }
+
+    .panel {
+        background: #ffffff;
+        border: 1px solid #dbe3ef;
+        border-radius: 8px;
+        padding: 18px;
+        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+    }
+
+    .panel-title {
+        color: #111827;
+        font-size: 1rem;
+        font-weight: 800;
+        margin-bottom: 2px;
+    }
+
+    .panel-note {
+        color: #64748b;
+        font-size: 0.86rem;
+        margin-bottom: 14px;
+    }
+
+    .metric-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin: 12px 0 16px;
+    }
+
+    .metric-tile {
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 12px;
+        background: #f8fafc;
+    }
+
+    .metric-value {
+        color: #0f172a;
+        font-size: 1.45rem;
+        font-weight: 800;
+    }
+
     .metric-label {
-        font-size: 0.8rem;
-        color: #94a3b8;
+        color: #64748b;
+        font-size: 0.78rem;
+        font-weight: 600;
     }
-    
-    /* Code block wrapper styling */
-    div[data-testid="stMarkdownContainer"] pre {
-        background-color: #0d1117 !important;
-        border: 1px solid rgba(255, 255, 255, 0.05) !important;
+
+    .status-band {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+    }
+
+    .status-pill {
+        background: #ecfeff;
+        color: #155e75;
+        border: 1px solid #a5f3fc;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 0.78rem;
+        font-weight: 700;
+    }
+
+    div[data-testid="stDataFrame"] {
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+    }
+
+    div[data-testid="stCodeBlock"] pre {
         border-radius: 8px !important;
+        border: 1px solid #1f2937 !important;
     }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-# ----------------- Dynamic Template Generator -----------------
+
 def generate_sample_excel():
     buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        sample_df = pd.DataFrame([
-            {"Column Name": "customer_id", "Data Type": "bigint", "Nullable": "No", "Description": "Unique identifier for the customer (Primary Key)"},
-            {"Column Name": "first_name", "Data Type": "varchar(100)", "Nullable": "Yes", "Description": "Customer's first name"},
-            {"Column Name": "last_name", "Data Type": "varchar(100)", "Nullable": "Yes", "Description": "Customer's last name"},
-            {"Column Name": "email", "Data Type": "string", "Nullable": "Yes", "Description": "Primary email contact address"},
-            {"Column Name": "credit_limit", "Data Type": "decimal(18,2)", "Nullable": "Yes", "Description": "Maximum credit line approved"},
-            {"Column Name": "birth_date", "Data Type": "date", "Nullable": "Yes", "Description": "Date of birth"},
-            {"Column Name": "is_active", "Data Type": "boolean", "Nullable": "No", "Description": "Indicates if customer status is active (True/False)"},
-            {"Column Name": "created_timestamp", "Data Type": "timestamp", "Nullable": "No", "Description": "Auditing field for record creation datetime"}
-        ])
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        sample_df = pd.DataFrame(
+            [
+                {
+                    "Column Name": "customer_id",
+                    "Data Type": "bigint",
+                    "Nullable": "No",
+                    "Description": "Unique customer identifier",
+                },
+                {
+                    "Column Name": "email",
+                    "Data Type": "varchar(250)",
+                    "Nullable": "No",
+                    "Description": "Primary contact email",
+                },
+                {
+                    "Column Name": "first_name",
+                    "Data Type": "varchar(100)",
+                    "Nullable": "Yes",
+                    "Description": "Customer first name",
+                },
+                {
+                    "Column Name": "credit_limit",
+                    "Data Type": "decimal(18,2)",
+                    "Nullable": "Yes",
+                    "Description": "Approved credit limit",
+                },
+                {
+                    "Column Name": "updated_at",
+                    "Data Type": "timestamp",
+                    "Nullable": "No",
+                    "Description": "Latest source update timestamp",
+                },
+            ]
+        )
         sample_df.to_excel(writer, sheet_name="Customer_Mapping", index=False)
     return buffer.getvalue()
 
-# ----------------- App Header -----------------
-st.markdown("""
-<div class="glass-header">
-    <div class="neon-title">🚀 <span class="neon-cyan">PySpark</span> Schema Generator</div>
-    <div style="font-size: 1.15rem; color: #cbd5e1; font-weight: 300;">
-        Transform Excel metadata mapping sheets into production-ready schemas, SQL DDLs, and table structures in seconds.
+
+def clean_table_name(value):
+    return "".join([char if char.isalnum() or char == "_" else "_" for char in str(value)])
+
+
+def default_merge_keys(df):
+    required = df[df["Nullable"].astype(str).str.strip().str.lower().isin(["no", "n", "false", "0"])]
+    if not required.empty:
+        return required["ColumnName"].astype(str).head(1).tolist()
+    return df["ColumnName"].astype(str).head(1).tolist()
+
+
+st.markdown('<div class="app-shell">', unsafe_allow_html=True)
+st.markdown(
+    """
+<div class="topbar">
+    <div class="eyebrow">Metadata-driven Spark generator</div>
+    <h1 class="title">PySpark Schema, DDL, MERGE, and YAML Generator</h1>
+    <div class="subtitle">
+        Upload an Excel mapping sheet, review the parsed metadata, and generate production-ready Spark assets from one controlled workspace.
+    </div>
+    <div class="status-band">
+        <span class="status-pill">Schema-first workflow</span>
+        <span class="status-pill">Spark SQL MERGE output</span>
+        <span class="status-pill">Fabric and lakehouse friendly</span>
     </div>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-# ----------------- Sidebar Control Panel -----------------
-st.sidebar.markdown("""
-<div style="text-align: center; margin-bottom: 20px;">
-    <span style="font-size: 1.4rem; font-weight: 800; color: #cc66ff; border-bottom: 2px solid #cc66ff; padding-bottom: 5px;">
-        🎛️ Control Center
-    </span>
-</div>
-""", unsafe_allow_html=True)
-
-# Download template button
-template_data = generate_sample_excel()
+st.sidebar.markdown("## Control Center")
 st.sidebar.download_button(
-    label="📥 Download Excel Template",
-    data=template_data,
+    label="Download Excel Template",
+    data=generate_sample_excel(),
     file_name="pyspark_mapping_template.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    use_container_width=True
+    use_container_width=True,
 )
 
-st.sidebar.markdown("<hr style='margin: 15px 0; opacity: 0.15;'/>", unsafe_allow_html=True)
-
-# File Uploader
 uploaded_file = st.sidebar.file_uploader(
-    "Upload Schema Mapping Excel File", 
+    "Upload mapping workbook",
     type=["xlsx", "xls"],
-    help="Excel mapping document detailing columns, datatypes, and nullability."
+    help="Upload an Excel workbook with column name, datatype, nullable, and description metadata.",
 )
 
-# Use default sample file if nothing uploaded
-excel_file_path = None
-if uploaded_file is not None:
-    excel_file_path = uploaded_file
-else:
-    # Check if Workday.Days.xlsx is available in default path
-    default_path = "input/Workday.Days.xlsx"
-    if os.path.exists(default_path):
-        excel_file_path = default_path
-        st.sidebar.info("ℹ️ Using default 'Workday.Days.xlsx' mapping sample.")
-    else:
-        st.sidebar.warning("⚠️ Please upload an Excel mapping spreadsheet to get started.")
+excel_file_path = uploaded_file
+default_path = "input/Workday.Days.xlsx"
+if excel_file_path is None and os.path.exists(default_path):
+    excel_file_path = default_path
+    st.sidebar.info("Using the default Workday.Days.xlsx sample.")
+elif excel_file_path is None:
+    st.sidebar.warning("Upload a workbook or download the template to get started.")
+
 
 if excel_file_path is not None:
     try:
         sheets = get_excel_sheets(excel_file_path)
-        selected_sheet = st.sidebar.selectbox("Select Excel Sheet", sheets)
-        
-        # Mapping extraction side selection
-        mapping_side = st.sidebar.selectbox(
-            "Mapping Extraction Side",
-            ["Destination / Target Schema", "Source System Schema"],
-            help="Choose whether to generate the schema mapping for the Target Destination system or the Source Input system."
+        selected_sheet = st.sidebar.selectbox("Worksheet", sheets)
+
+        mapping_side = st.sidebar.radio(
+            "Mapping side",
+            ["Destination", "Source"],
+            horizontal=True,
+            index=0,
+            help="Choose the side of the mapping sheet used for generation.",
         )
-        target_side = "destination" if "Destination" in mapping_side else "source"
-        
-        # Advanced configurations
-        with st.sidebar.expander("⚙️ Parsing Configuration", expanded=False):
-            auto_detect = st.checkbox("Auto-detect Headers Row", value=True, help="Scan the sheet to automatically locate the header table row.")
+        target_side = "destination" if mapping_side == "Destination" else "source"
+
+        with st.sidebar.expander("Parsing", expanded=False):
+            auto_detect = st.checkbox("Auto-detect header row", value=True)
             skip_rows_val = None
             if not auto_detect:
-                skip_rows_val = st.number_input("Header Skip Rows Offset", min_value=0, value=0, step=1)
-                
-        # Microsoft Fabric Lakehouse Optimization Option
-        st.sidebar.markdown("""
-        <div style="font-weight: 600; font-size: 0.95rem; color: #cc66ff; margin-top: 10px;">
-            🧱 Fabric Lakehouse Optimization
-        </div>
-        """, unsafe_allow_html=True)
-        is_fabric = st.sidebar.toggle(
-            "Enable Fabric Lakehouse Mode", 
-            value=True, 
-            help="Tailor namespaces, lock storage engines to Delta Lake, and generate custom DDL comments for Microsoft Fabric Lakehouses."
-        )
-            
-        # Target table configurations
-        st.sidebar.markdown(f"""
-        <div style="font-weight: 600; font-size: 0.95rem; color: #00ffcc; margin-top: 15px;">
-            💎 {"Fabric Namespace Setup" if is_fabric else "Target Table Configuration"}
-        </div>
-        """, unsafe_allow_html=True)
-        
+                skip_rows_val = st.number_input("Header row offset", min_value=0, value=0, step=1)
+
+        st.sidebar.markdown("### Target")
+        is_fabric = st.sidebar.toggle("Fabric Lakehouse mode", value=True)
         if is_fabric:
-            catalog = st.sidebar.text_input("Fabric Workspace (Optional)", value="", placeholder="e.g. finance_workspace")
-            database = st.sidebar.text_input("Fabric Lakehouse Name", value="finance_lh", placeholder="e.g. transactions_lh")
+            catalog = st.sidebar.text_input("Workspace", value="", placeholder="optional_workspace")
+            database = st.sidebar.text_input("Lakehouse", value="finance_lh")
+            table_format = "DELTA"
         else:
-            catalog = st.sidebar.text_input("Target Catalog", value="", placeholder="e.g. unity_catalog")
-            database = st.sidebar.text_input("Target Database / Schema", value="bronze", placeholder="e.g. core_db")
-        
-        # Derive target table name directly from the sheet name!
-        # Excel Sheet name is Nothing But Table_Name
-        default_table = "".join([c if c.isalnum() or c == '_' else '_' for c in selected_sheet])
-        
-        table_name = st.sidebar.text_input("Target Table Name", value=default_table)
-        
-        # Format and custom options
-        st.sidebar.markdown("""
-        <div style="font-weight: 600; font-size: 0.95rem; color: #00ffcc; margin-top: 15px;">
-            📝 Output Script Preferences
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if is_fabric:
-            table_format = st.sidebar.selectbox("Table SQL Format", ["DELTA"], help="Delta Lake is the standard storage format for Microsoft Fabric Lakehouse tables.")
-        else:
-            table_format = st.sidebar.selectbox("Table SQL Format", ["DELTA", "PARQUET", "CSV", "ORC", "ICEBERG"])
-            
-        include_comments = st.sidebar.checkbox("Include Column Comments", value=True)
-        include_reader = st.sidebar.checkbox("Include Spark Read Template", value=True)
-        
-        # Load the data
+            catalog = st.sidebar.text_input("Catalog", value="", placeholder="main")
+            database = st.sidebar.text_input("Database / schema", value="bronze")
+            table_format = st.sidebar.selectbox("Table format", ["DELTA", "PARQUET", "CSV", "ORC", "ICEBERG"])
+
+        default_table = clean_table_name(selected_sheet)
+        table_name = st.sidebar.text_input("Target table", value=default_table)
+        source_table = st.sidebar.text_input("Merge source table/view", value=f"staging_{table_name}")
+
+        st.sidebar.markdown("### Output")
+        include_comments = st.sidebar.checkbox("Include comments", value=True)
+        include_reader = st.sidebar.checkbox("Include read template", value=True)
+
         skiprows_arg = None if auto_detect else skip_rows_val
         df_parsed = read_excel_mapping(excel_file_path, selected_sheet, skiprows_arg, target_side=target_side)
-        
+
         if df_parsed is not None and not df_parsed.empty:
-            # ----------------- Main Layout -----------------
-            col_left, col_right = st.columns([5, 6])
-            
+            col_left, col_right = st.columns([5, 7], gap="large")
+
             with col_left:
-                st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-                st.markdown("""
-                <div style="font-size: 1.25rem; font-weight: 700; color: #cc66ff; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
-                    👁️ Mapping Metadata Editor
-                </div>
-                <div style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 15px;">
-                    Review the parsed spreadsheet schema below. You can double-click cells to <b>modify names or datatypes in real-time</b> to update the generated code instantly!
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Render Streamlit Editable Dataframe
+                st.markdown(
+                    """
+<div class="panel">
+    <div class="panel-title">Mapping Editor</div>
+    <div class="panel-note">Review and adjust parsed columns before generating Spark assets.</div>
+</div>
+""",
+                    unsafe_allow_html=True,
+                )
+
                 edited_df = st.data_editor(
                     df_parsed,
                     use_container_width=True,
                     num_rows="dynamic",
+                    hide_index=True,
                     column_config={
-                        "ColumnName": st.column_config.TextColumn(
-                            "Column Name",
-                            help="Name of the field in PySpark schema / SQL table",
-                            required=True,
-                        ),
-                        "DataType": st.column_config.TextColumn(
-                            "Source Datatype",
-                            help="Original data type (e.g. varchar, decimal(18,2), int)",
-                            required=True,
-                        ),
+                        "ColumnName": st.column_config.TextColumn("Column", required=True),
+                        "DataType": st.column_config.TextColumn("Datatype", required=True),
                         "Nullable": st.column_config.SelectboxColumn(
-                            "Nullable?",
+                            "Nullable",
                             options=["Yes", "No"],
                             default="Yes",
                             required=True,
                         ),
-                        "Description": st.column_config.TextColumn(
-                            "Description / Comment",
-                            help="Column metadata comment used in SQL DDL & StructType",
-                        )
-                    }
+                        "Description": st.column_config.TextColumn("Description"),
+                    },
                 )
-                
-                # Show quick statistics
+
                 total_cols = len(edited_df)
-                nullable_cols = len(edited_df[edited_df['Nullable'].str.lower().str.startswith('y')])
-                
-                st.markdown(f"""
-                <div class="metric-container">
-                    <div class="metric-box">
-                        <div class="metric-value">{total_cols}</div>
-                        <div class="metric-label">Total Columns</div>
-                    </div>
-                    <div class="metric-box">
-                        <div class="metric-value">{nullable_cols}</div>
-                        <div class="metric-label">Nullable Columns</div>
-                    </div>
-                    <div class="metric-box">
-                        <div class="metric-value">{total_cols - nullable_cols}</div>
-                        <div class="metric-label">Required Columns</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Datatype distribution chart
-                st.markdown("<div style='font-size: 0.95rem; font-weight: 600; color: #cbd5e1; margin-bottom: 8px;'>Datatype Distribution</div>", unsafe_allow_html=True)
-                type_counts = edited_df['DataType'].str.lower().str.split('(').str[0].value_counts().reset_index()
-                type_counts.columns = ['Datatype Group', 'Count']
-                st.bar_chart(type_counts, x='Datatype Group', y='Count', color='#00ffcc', height=180)
-                
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-            with col_right:
-                st.markdown("<div class='glass-card' style='height: 100%;'>", unsafe_allow_html=True)
-                st.markdown("""
-                <div style="font-size: 1.25rem; font-weight: 700; color: #00ffcc; margin-bottom: 12px;">
-                    💻 Generated Code Outputs
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Code generation tabs
-                tab_pyspark, tab_sql, tab_yaml = st.tabs([
-                    "🐍 PySpark Schema", 
-                    "🛢️ Spark SQL DDL", 
-                    "📄 YAML Configuration"
-                ])
-                
-                # Generate PySpark Schema Code
-                pyspark_code = generate_pyspark_schema(
-                    edited_df, 
-                    table_name, 
-                    include_comments=include_comments, 
-                    include_reader=include_reader,
-                    file_format=table_format.lower()
+                nullable_cols = len(
+                    edited_df[edited_df["Nullable"].astype(str).str.strip().str.lower().isin(["yes", "y", "true", "1"])]
                 )
-                
-                with tab_pyspark:
-                    st.markdown("""
-                    <div style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 10px;">
-                        Copy the code below directly into your Databricks, Fabric, or local PySpark notebook.
-                    </div>
-                    """, unsafe_allow_html=True)
-                    st.code(pyspark_code, language="python")
-                    
-                    st.download_button(
-                        label="📥 Download PySpark Script",
-                        data=pyspark_code,
-                        file_name=f"{table_name}_schema.py",
-                        mime="text/plain",
-                        use_container_width=True
-                    )
-                    
-                # Generate Spark SQL DDL Code
+                required_cols = total_cols - nullable_cols
+                st.markdown(
+                    f"""
+<div class="metric-row">
+    <div class="metric-tile"><div class="metric-value">{total_cols}</div><div class="metric-label">Columns</div></div>
+    <div class="metric-tile"><div class="metric-value">{nullable_cols}</div><div class="metric-label">Nullable</div></div>
+    <div class="metric-tile"><div class="metric-value">{required_cols}</div><div class="metric-label">Required</div></div>
+</div>
+""",
+                    unsafe_allow_html=True,
+                )
+
+                type_counts = edited_df["DataType"].astype(str).str.lower().str.split("(").str[0].value_counts().reset_index()
+                type_counts.columns = ["Datatype", "Count"]
+                st.bar_chart(type_counts, x="Datatype", y="Count", color="#0f766e", height=210)
+
+            with col_right:
+                st.markdown(
+                    """
+<div class="panel">
+    <div class="panel-title">Generated Assets</div>
+    <div class="panel-note">Choose merge keys, inspect generated code, and download each artifact.</div>
+</div>
+""",
+                    unsafe_allow_html=True,
+                )
+
+                available_columns = edited_df["ColumnName"].dropna().astype(str).tolist()
+                selected_merge_keys = st.multiselect(
+                    "MERGE key columns",
+                    options=available_columns,
+                    default=[col for col in default_merge_keys(edited_df) if col in available_columns],
+                    help="These columns form the Spark SQL MERGE ON clause.",
+                )
+
+                pyspark_code = generate_pyspark_schema(
+                    edited_df,
+                    table_name,
+                    include_comments=include_comments,
+                    include_reader=include_reader,
+                    file_format=table_format.lower(),
+                )
                 sql_code = generate_spark_sql_ddl(
                     edited_df,
                     table_name,
                     catalog_name=catalog,
                     database_name=database,
                     include_comments=include_comments,
-                    table_format=table_format
+                    table_format=table_format,
                 )
-                
-                if is_fabric:
-                    # Prepend a beautiful header to the DDL
-                    header = "-- ========================================================\n"
-                    header += f"-- Microsoft Fabric Lakehouse Managed Table DDL\n"
-                    if catalog:
-                        header += f"-- Workspace: {catalog}\n"
-                    if database:
-                        header += f"-- Lakehouse: {database}\n"
-                    header += f"-- Table:     {table_name}\n"
-                    header += "-- ========================================================\n\n"
-                    sql_code = header + sql_code
-                
-                with tab_sql:
-                    st.markdown("""
-                    <div style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 10px;">
-                        Standard SQL DDL table definition block, fully optimized for delta lakes and lakehouses.
-                    </div>
-                    """, unsafe_allow_html=True)
-                    st.code(sql_code, language="sql")
-                    
-                    st.download_button(
-                        label="📥 Download SQL DDL",
-                        data=sql_code,
-                        file_name=f"{table_name}_ddl.sql",
-                        mime="text/plain",
-                        use_container_width=True
-                    )
-                    
-                # Generate YAML Code
+                merge_code = generate_spark_sql_merge(
+                    edited_df,
+                    target_table=table_name,
+                    source_table=source_table,
+                    key_columns=selected_merge_keys,
+                    catalog_name=catalog,
+                    database_name=database,
+                )
                 yaml_code = generate_yaml_config(
                     edited_df,
                     table_name,
                     catalog_name=catalog,
-                    database_name=database
+                    database_name=database,
                 )
-                
-                with tab_yaml:
-                    st.markdown("""
-                    <div style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 10px;">
-                        Clean structured configuration YAML, perfect for metadata-driven frameworks and config files.
-                    </div>
-                    """, unsafe_allow_html=True)
-                    st.code(yaml_code, language="yaml")
-                    
+
+                if is_fabric:
+                    fabric_header = (
+                        "-- Microsoft Fabric Lakehouse script\n"
+                        f"-- Lakehouse: {database or 'not specified'}\n"
+                        f"-- Table: {table_name}\n\n"
+                    )
+                    sql_code = fabric_header + sql_code
+                    merge_code = fabric_header + merge_code
+
+                tab_pyspark, tab_sql, tab_merge, tab_yaml = st.tabs(
+                    ["PySpark Schema", "Spark SQL DDL", "Spark SQL MERGE", "YAML Config"]
+                )
+
+                with tab_pyspark:
+                    st.code(pyspark_code, language="python")
                     st.download_button(
-                        label="📥 Download YAML Config",
+                        "Download PySpark",
+                        data=pyspark_code,
+                        file_name=f"{table_name}_schema.py",
+                        mime="text/plain",
+                        use_container_width=True,
+                    )
+
+                with tab_sql:
+                    st.code(sql_code, language="sql")
+                    st.download_button(
+                        "Download DDL",
+                        data=sql_code,
+                        file_name=f"{table_name}_ddl.sql",
+                        mime="text/plain",
+                        use_container_width=True,
+                    )
+
+                with tab_merge:
+                    st.code(merge_code, language="sql")
+                    st.download_button(
+                        "Download MERGE",
+                        data=merge_code,
+                        file_name=f"{table_name}_merge.sql",
+                        mime="text/plain",
+                        use_container_width=True,
+                    )
+
+                with tab_yaml:
+                    st.code(yaml_code, language="yaml")
+                    st.download_button(
+                        "Download YAML",
                         data=yaml_code,
                         file_name=f"{table_name}_config.yaml",
                         mime="text/plain",
-                        use_container_width=True
+                        use_container_width=True,
                     )
-                
-                st.markdown("</div>", unsafe_allow_html=True)
-                
+
         else:
-            st.error("❌ The selected sheet could not be parsed. Please check if your row offset configurations are correct, or upload a standard mapping Excel document.")
-            
-    except Exception as e:
-        st.error(f"❌ Error processing Excel mapping sheet: {e}")
-        st.info("💡 Try downloading our standard excel template in the sidebar to review the expected structure.")
+            st.error("The selected sheet could not be parsed. Check the header row or upload the standard template.")
+    except Exception as exc:
+        st.error(f"Error processing workbook: {exc}")
+else:
+    st.info("Start by uploading a mapping workbook from the sidebar, or download the Excel template.")
+
+st.markdown("</div>", unsafe_allow_html=True)

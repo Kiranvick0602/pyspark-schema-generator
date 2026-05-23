@@ -1,5 +1,27 @@
 from datatype_mapper import map_datatype, map_to_spark_sql_type
 
+def _is_not_nullable(value):
+    return str(value).strip().lower() in ['no', 'n', 'false', '0']
+
+def _quote_sql_identifier(identifier):
+    """
+    Quotes a Spark SQL identifier and escapes embedded backticks.
+    Supports multipart names by quoting each segment.
+    """
+    parts = [part for part in str(identifier).split('.') if part]
+    if not parts:
+        return "``"
+    return ".".join(f"`{part.replace('`', '``')}`" for part in parts)
+
+def _qualified_table_name(table_name, catalog_name="", database_name=""):
+    parts = []
+    if catalog_name:
+        parts.append(catalog_name)
+    if database_name:
+        parts.append(database_name)
+    parts.append(table_name)
+    return ".".join(_quote_sql_identifier(part) for part in parts)
+
 def generate_pyspark_schema(df, table_name, include_comments=True, include_reader=False, file_format="parquet"):
     """
     Generates a Python script containing the PySpark StructType schema definition.
@@ -53,12 +75,7 @@ def generate_spark_sql_ddl(df, table_name, catalog_name="", database_name="", in
     """
     Generates standard Spark SQL DDL CREATE TABLE statement.
     """
-    full_table_name = ""
-    if catalog_name:
-        full_table_name += f"`{catalog_name}`."
-    if database_name:
-        full_table_name += f"`{database_name}`."
-    full_table_name += f"`{table_name}`"
+    full_table_name = _qualified_table_name(table_name, catalog_name, database_name)
     
     sql = f"CREATE TABLE IF NOT EXISTS {full_table_name} (\n"
     
@@ -68,7 +85,7 @@ def generate_spark_sql_ddl(df, table_name, catalog_name="", database_name="", in
         sql_type = map_to_spark_sql_type(row['DataType'])
         
         nullable = ''
-        if str(row['Nullable']).strip().lower() in ['no', 'n', 'false', '0']:
+        if _is_not_nullable(row['Nullable']):
             nullable = ' NOT NULL'
             
         desc = str(row.get('Description', '') or '').strip()
@@ -89,6 +106,72 @@ def generate_spark_sql_ddl(df, table_name, catalog_name="", database_name="", in
         escaped_comment = str(table_comment).replace("'", "\\'")
         sql += f"COMMENT '{escaped_comment}'\n"
         
+    return sql
+
+def generate_spark_sql_merge(
+    df,
+    target_table,
+    source_table,
+    key_columns=None,
+    catalog_name="",
+    database_name="",
+    include_update=True,
+    include_insert=True,
+):
+    """
+    Generates a Spark SQL MERGE statement from the standardized mapping DataFrame.
+    key_columns controls the ON clause. If omitted, non-nullable columns are used,
+    falling back to the first mapped column.
+    """
+    columns = [str(row['ColumnName']).strip() for _, row in df.iterrows() if str(row['ColumnName']).strip()]
+    if not columns:
+        raise ValueError("Cannot generate MERGE SQL without mapped columns.")
+
+    if key_columns:
+        key_columns = [str(col).strip() for col in key_columns if str(col).strip()]
+    else:
+        key_columns = [
+            str(row['ColumnName']).strip()
+            for _, row in df.iterrows()
+            if str(row['ColumnName']).strip() and _is_not_nullable(row.get('Nullable', 'Yes'))
+        ]
+        if not key_columns:
+            key_columns = [columns[0]]
+
+    missing_keys = [col for col in key_columns if col not in columns]
+    if missing_keys:
+        raise ValueError(f"Merge key columns not found in mapping: {', '.join(missing_keys)}")
+
+    target_name = _qualified_table_name(target_table, catalog_name, database_name)
+    source_name = _quote_sql_identifier(source_table)
+    on_clause = " AND ".join(
+        f"target.{_quote_sql_identifier(col)} = source.{_quote_sql_identifier(col)}"
+        for col in key_columns
+    )
+
+    sql = f"MERGE INTO {target_name} AS target\n"
+    sql += f"USING {source_name} AS source\n"
+    sql += f"ON {on_clause}\n"
+
+    update_columns = [col for col in columns if col not in key_columns]
+    if include_update and update_columns:
+        assignments = [
+            f"  target.{_quote_sql_identifier(col)} = source.{_quote_sql_identifier(col)}"
+            for col in update_columns
+        ]
+        sql += "WHEN MATCHED THEN UPDATE SET\n"
+        sql += ",\n".join(assignments)
+        sql += "\n"
+
+    if include_insert:
+        quoted_columns = ", ".join(_quote_sql_identifier(col) for col in columns)
+        source_values = ", ".join(f"source.{_quote_sql_identifier(col)}" for col in columns)
+        sql += "WHEN NOT MATCHED THEN INSERT (\n"
+        sql += f"  {quoted_columns}\n"
+        sql += ") VALUES (\n"
+        sql += f"  {source_values}\n"
+        sql += ")\n"
+
     return sql
 
 def generate_yaml_config(df, table_name, catalog_name="", database_name=""):
@@ -118,4 +201,4 @@ def generate_yaml_config(df, table_name, catalog_name="", database_name=""):
         if desc:
             yaml += f"    description: \"{desc}\"\n"
             
-    return yaml
+    return yaml
