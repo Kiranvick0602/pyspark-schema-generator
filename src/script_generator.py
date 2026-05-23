@@ -119,31 +119,55 @@ def generate_spark_sql_merge(
     include_insert=True,
 ):
     """
-    Generates a Spark SQL MERGE statement from the standardized mapping DataFrame.
-    key_columns controls the ON clause. If omitted, non-nullable columns are used,
-    falling back to the first mapped column.
+    Generates optimized Spark SQL MERGE statement.
+
+    Updates happen only when non-key column values differ.
     """
-    columns = [str(row['ColumnName']).strip() for _, row in df.iterrows() if str(row['ColumnName']).strip()]
+
+    columns = [
+        str(row['ColumnName']).strip()
+        for _, row in df.iterrows()
+        if str(row['ColumnName']).strip()
+    ]
+
     if not columns:
         raise ValueError("Cannot generate MERGE SQL without mapped columns.")
 
+    # Determine merge keys
     if key_columns:
-        key_columns = [str(col).strip() for col in key_columns if str(col).strip()]
+        key_columns = [
+            str(col).strip()
+            for col in key_columns
+            if str(col).strip()
+        ]
     else:
         key_columns = [
             str(row['ColumnName']).strip()
             for _, row in df.iterrows()
-            if str(row['ColumnName']).strip() and _is_not_nullable(row.get('Nullable', 'Yes'))
+            if str(row['ColumnName']).strip()
+            and _is_not_nullable(row.get('Nullable', 'Yes'))
         ]
+
         if not key_columns:
             key_columns = [columns[0]]
 
+    # Validate keys
     missing_keys = [col for col in key_columns if col not in columns]
-    if missing_keys:
-        raise ValueError(f"Merge key columns not found in mapping: {', '.join(missing_keys)}")
 
-    target_name = _qualified_table_name(target_table, catalog_name, database_name)
+    if missing_keys:
+        raise ValueError(
+            f"Merge key columns not found in mapping: {', '.join(missing_keys)}"
+        )
+
+    target_name = _qualified_table_name(
+        target_table,
+        catalog_name,
+        database_name
+    )
+
     source_name = _quote_sql_identifier(source_table)
+
+    # ON clause
     on_clause = " AND ".join(
         f"target.{_quote_sql_identifier(col)} = source.{_quote_sql_identifier(col)}"
         for col in key_columns
@@ -153,19 +177,49 @@ def generate_spark_sql_merge(
     sql += f"USING {source_name} AS source\n"
     sql += f"ON {on_clause}\n"
 
+    # Non-key columns
     update_columns = [col for col in columns if col not in key_columns]
+
+    # UPDATE section
     if include_update and update_columns:
+
+        # Detect changes
+        change_conditions = [
+            f"""(
+                target.{_quote_sql_identifier(col)} <> source.{_quote_sql_identifier(col)}
+                OR target.{_quote_sql_identifier(col)} IS NULL AND source.{_quote_sql_identifier(col)} IS NOT NULL
+                OR target.{_quote_sql_identifier(col)} IS NOT NULL AND source.{_quote_sql_identifier(col)} IS NULL
+            )"""
+            for col in update_columns
+        ]
+
+        change_clause = "\n OR ".join(change_conditions)
+
         assignments = [
             f"  target.{_quote_sql_identifier(col)} = source.{_quote_sql_identifier(col)}"
             for col in update_columns
         ]
-        sql += "WHEN MATCHED THEN UPDATE SET\n"
+
+        sql += "WHEN MATCHED AND (\n"
+        sql += change_clause
+        sql += "\n) THEN UPDATE SET\n"
+
         sql += ",\n".join(assignments)
         sql += "\n"
 
+    # INSERT section
     if include_insert:
-        quoted_columns = ", ".join(_quote_sql_identifier(col) for col in columns)
-        source_values = ", ".join(f"source.{_quote_sql_identifier(col)}" for col in columns)
+
+        quoted_columns = ", ".join(
+            _quote_sql_identifier(col)
+            for col in columns
+        )
+
+        source_values = ", ".join(
+            f"source.{_quote_sql_identifier(col)}"
+            for col in columns
+        )
+
         sql += "WHEN NOT MATCHED THEN INSERT (\n"
         sql += f"  {quoted_columns}\n"
         sql += ") VALUES (\n"
